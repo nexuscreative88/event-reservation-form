@@ -546,7 +546,14 @@
 
   var ADMIN_PASSWORD = "event2026";
   var SLOT_CAPACITY = 50;
-  var WEBHOOK_URL = "https://hook.us2.make.com/a3bq87cxfft1s567cwbhkl6pu93nlciw";
+
+  // Make.com webhook URLs.
+  // SAVE: receives a new reservation and appends it to the Google Sheet.
+  // READ: returns the current list of reservations as a JSON array, used for
+  //       slot-capacity checks and the admin list.
+  var SAVE_WEBHOOK_URL = "https://hook.us2.make.com/a3bq87cxfft1s567cwbhkl6pu93nlciw";
+  var READ_WEBHOOK_URL = "PASTE_READ_WEBHOOK_URL_HERE";
+
   var TIME_SLOTS = [
     "10:00-11:00","11:00-12:00","12:00-13:00",
     "13:00-14:00","14:00-15:00","15:00-16:00",
@@ -571,8 +578,7 @@
     adminLockError: false,
     reservations: [],
     adminLoading: false,
-    boothDrafts: {},
-    savedFlash: {},
+    adminLoadError: "",
     slotCounts: {},            // { "10:00-11:00": 12, ... }
     slotCountsLoaded: false
   };
@@ -581,28 +587,31 @@
     return 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
   }
 
-  function countSlots(){
-    var listPromise;
-    try{
-      listPromise = window.storage.list('reservation:', true);
-    }catch(err){
-      return Promise.reject(err);
+  // Normalizes whatever shape the Make "Search Rows" / webhook response
+  // comes back as into a plain array of reservation objects. Make scenarios
+  // commonly return a bare array, or wrap it as {rows: [...]} / {data: [...]}.
+  function normalizeReservationList(payload){
+    if(Array.isArray(payload)) return payload;
+    if(payload && Array.isArray(payload.rows)) return payload.rows;
+    if(payload && Array.isArray(payload.data)) return payload.data;
+    if(payload && Array.isArray(payload.reservations)) return payload.reservations;
+    return [];
+  }
+
+  function fetchReservations(){
+    if(!READ_WEBHOOK_URL || READ_WEBHOOK_URL.indexOf('PASTE_') === 0){
+      return Promise.reject(new Error('READ_WEBHOOK_URL is not configured'));
     }
-    return listPromise.then(function(listRes){
-      var keys = (listRes && listRes.keys) ? listRes.keys : [];
-      var items = [];
-      var chain = Promise.resolve();
-      keys.forEach(function(k){
-        chain = chain.then(function(){
-          return window.storage.get(k, true).then(function(got){
-            if(got && got.value){
-              try{ items.push(JSON.parse(got.value)); }catch(e){}
-            }
-          }).catch(function(){});
-        });
-      });
-      return chain.then(function(){ return items; });
-    }).then(function(items){
+    return fetch(READ_WEBHOOK_URL).then(function(res){
+      if(!res.ok) throw new Error('Read webhook returned status ' + res.status);
+      return res.json();
+    }).then(function(payload){
+      return normalizeReservationList(payload);
+    });
+  }
+
+  function countSlots(){
+    return fetchReservations().then(function(items){
       var counts = {};
       TIME_SLOTS.forEach(function(t){ counts[t] = 0; });
       items.forEach(function(r){
@@ -625,26 +634,28 @@
     });
   }
 
-  function notifyWebhook(record){
-    // Send the reservation details to the Make.com webhook so it can
-    // trigger an automatic confirmation email. We don't block the UI
-    // on this, and a failure here doesn't affect the saved reservation.
-    if(!WEBHOOK_URL) return;
-    try{
-      fetch(WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: record.name,
-          phone: record.phone,
-          email: record.email,
-          referrer: record.referrer,
-          slot: record.slot,
-          ampm: record.ampm,
-          createdAt: record.createdAt
-        })
-      }).catch(function(){ /* ignore network errors, reservation is already saved */ });
-    }catch(err){ /* ignore, reservation is already saved */ }
+  function saveReservation(record){
+    // Sends the reservation to the Make.com "save" scenario, which appends
+    // it as a new row in the Google Sheet. This call itself is the save —
+    // there is no local storage fallback.
+    return fetch(SAVE_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: record.id,
+        createdAt: record.createdAt,
+        name: record.name,
+        phone: record.phone,
+        email: record.email,
+        referrer: record.referrer,
+        slot: record.slot,
+        ampm: record.ampm,
+        booth: record.booth
+      })
+    }).then(function(res){
+      if(!res.ok) throw new Error('Save webhook returned status ' + res.status);
+      return true;
+    });
   }
 
   function escapeHtml(str){
@@ -786,29 +797,29 @@
     html += '<div class="admin-head"><h2>予約一覧</h2><span class="count-badge">' + state.reservations.length + '件</span></div>';
     html += '<button class="refresh-btn" data-action="refresh-admin">一覧を更新</button>';
 
+    if(state.adminLoadError){
+      html += '<div class="form-error">' + escapeHtml(state.adminLoadError) + '</div>';
+    }
+
     if(state.adminLoading){
       html += '<div class="admin-empty">読み込み中...</div>';
-    } else if(state.reservations.length === 0){
+    } else if(state.reservations.length === 0 && !state.adminLoadError){
       html += '<div class="admin-empty">まだ予約はありません</div>';
     } else {
       state.reservations.forEach(function(r){
-        var draft = state.boothDrafts[r.id] !== undefined ? state.boothDrafts[r.id] : (r.booth || '');
-        html += '<div class="res-card" data-id="' + r.id + '">';
+        html += '<div class="res-card" data-id="' + escapeHtml(r.id || '') + '">';
         html += '<div class="res-top"><span class="res-name">' + escapeHtml(r.name) + '</span><span class="res-time">' + escapeHtml(describeChoice(r)) + '</span></div>';
         html += '<div class="res-detail">';
         html += '<div><b>電話:</b> ' + escapeHtml(r.phone) + '</div>';
         html += '<div><b>メール:</b> ' + escapeHtml(r.email) + '</div>';
         html += '<div><b>紹介者:</b> ' + escapeHtml(r.referrer) + '</div>';
-        html += '</div>';
-        html += '<div class="booth-row">';
-        html += '<label>ブース:</label>';
-        html += '<input type="text" data-booth-id="' + r.id + '" value="' + escapeHtml(draft) + '" placeholder="未入力" />';
-        html += '<span class="saved-mark' + (state.savedFlash[r.id] ? ' show' : '') + '">保存済</span>';
+        html += '<div><b>ブース:</b> ' + escapeHtml(r.booth || '未入力') + '</div>';
         html += '</div>';
         html += '</div>';
       });
     }
 
+    html += '<p style="font-size:11.5px;color:var(--ink-soft);text-align:center;margin:14px 0 4px;">ブースの割り当てはGoogleスプレッドシートを直接編集してください</p>';
     html += '<button class="admin-logout" data-action="admin-logout">管理者ページを閉じる</button>';
     html += '</div>';
     return html;
@@ -846,10 +857,16 @@
     var f = state.form;
 
     // Re-check capacity right before saving, in case another person
-    // filled the slot while this user had the form open.
+    // filled the slot while this user had the form open. If the capacity
+    // check itself can't be reached (e.g. read webhook not configured yet),
+    // we don't block the reservation — we just skip the re-check.
     countSlots().then(function(counts){
       state.slotCounts = counts;
-      if(f.slot){
+      return counts;
+    }).catch(function(){
+      return null;
+    }).then(function(counts){
+      if(counts && f.slot){
         var currentCount = counts[f.slot] || 0;
         if(currentCount >= SLOT_CAPACITY){
           state.submitting = false;
@@ -872,21 +889,8 @@
         createdAt: new Date().toISOString()
       };
 
-      var savePromise;
-      try{
-        savePromise = window.storage.set('reservation:' + record.id, JSON.stringify(record), true);
-      }catch(err){
-        savePromise = Promise.reject(err);
-      }
-
-      savePromise.then(function(result){
+      saveReservation(record).then(function(){
         state.submitting = false;
-        if(!result){
-          state.formError = "予約の保存に失敗しました。もう一度お試しください。";
-          render();
-          return;
-        }
-        notifyWebhook(record);
         state.confirmedRecord = record;
         render();
       }).catch(function(){
@@ -894,10 +898,6 @@
         state.formError = "予約の保存に失敗しました。もう一度お試しください。";
         render();
       });
-    }).catch(function(){
-      state.submitting = false;
-      state.formError = "予約状況の確認に失敗しました。もう一度お試しください。";
-      render();
     });
   }
 
@@ -913,35 +913,12 @@
   // ---------------- admin ----------------
   function loadReservations(){
     state.adminLoading = true;
+    state.adminLoadError = "";
     render();
 
-    var listPromise;
-    try{
-      listPromise = window.storage.list('reservation:', true);
-    }catch(err){
-      listPromise = Promise.reject(err);
-    }
-
-    listPromise.then(function(listRes){
-      var keys = (listRes && listRes.keys) ? listRes.keys : [];
-      var items = [];
-      var chain = Promise.resolve();
-      keys.forEach(function(k){
-        chain = chain.then(function(){
-          return window.storage.get(k, true).then(function(got){
-            if(got && got.value){
-              try{ items.push(JSON.parse(got.value)); }catch(e){}
-            }
-          }).catch(function(){ /* skip unreadable entry */ });
-        });
-      });
-      return chain.then(function(){ return items; });
-    }).then(function(items){
+    fetchReservations().then(function(items){
       items.sort(function(a,b){ return new Date(b.createdAt) - new Date(a.createdAt); });
       state.reservations = items;
-      var drafts = {};
-      items.forEach(function(r){ drafts[r.id] = r.booth || ""; });
-      state.boothDrafts = drafts;
       var counts = {};
       TIME_SLOTS.forEach(function(t){ counts[t] = 0; });
       items.forEach(function(r){
@@ -955,39 +932,9 @@
     }).catch(function(){
       state.reservations = [];
       state.adminLoading = false;
+      state.adminLoadError = "予約一覧の読み込みに失敗しました。読み取り用Webhook URLの設定を確認してください。";
       render();
     });
-  }
-
-  function saveBooth(id){
-    var record = null;
-    for(var i=0;i<state.reservations.length;i++){
-      if(state.reservations[i].id === id){ record = state.reservations[i]; break; }
-    }
-    if(!record) return;
-    var newBooth = state.boothDrafts[id] !== undefined ? state.boothDrafts[id] : "";
-    var updated = Object.assign({}, record, { booth: newBooth });
-
-    var setPromise;
-    try{
-      setPromise = window.storage.set('reservation:' + id, JSON.stringify(updated), true);
-    }catch(err){
-      setPromise = Promise.reject(err);
-    }
-
-    setPromise.then(function(result){
-      if(result){
-        for(var i=0;i<state.reservations.length;i++){
-          if(state.reservations[i].id === id){ state.reservations[i] = updated; break; }
-        }
-        state.savedFlash[id] = true;
-        render();
-        setTimeout(function(){
-          state.savedFlash[id] = false;
-          render();
-        }, 1500);
-      }
-    }).catch(function(){ /* save failed silently, user can retry by editing again */ });
   }
 
   // ---------------- event delegation ----------------
@@ -1053,19 +1000,6 @@
         render();
       });
     }
-
-    root.querySelectorAll('[data-booth-id]').forEach(function(input){
-      var id = input.getAttribute('data-booth-id');
-      input.addEventListener('input', function(){
-        state.boothDrafts[id] = input.value;
-      });
-      input.addEventListener('blur', function(){
-        saveBooth(id);
-      });
-      input.addEventListener('keydown', function(e){
-        if(e.key === 'Enter') saveBooth(id);
-      });
-    });
   }
 
   function tryUnlock(){
