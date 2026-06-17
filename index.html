@@ -213,6 +213,26 @@
     opacity:.9;
     font-weight:600;
   }
+  .timeslot.full{
+    background:#EAE5D6;
+    border-color:#D8CBA8;
+    border-style:solid;
+    color:#B6AB8C;
+    cursor:not-allowed;
+  }
+  .timeslot.full:hover{
+    border-color:#D8CBA8;
+    background:#EAE5D6;
+  }
+  .timeslot.full::after{
+    content:'満員';
+    display:block;
+    font-size:9.5px;
+    letter-spacing:.08em;
+    margin-top:2px;
+    font-weight:700;
+    color:var(--stamp-deep);
+  }
 
   /* Perforation between ticket halves */
   .perforation{
@@ -499,6 +519,20 @@
     font-size:13px;
   }
 
+  .refresh-btn{
+    display:block;
+    margin:0 auto 16px;
+    background:none;
+    border:1.4px solid var(--line);
+    color:var(--ink-soft);
+    font-size:12px;
+    font-weight:700;
+    padding:7px 14px;
+    border-radius:999px;
+    cursor:pointer;
+    font-family:inherit;
+  }
+
   @media (max-width:380px){
     .timegrid{ grid-template-columns:repeat(3,1fr); }
     .ticket-top, .ticket-bottom{ padding-left:18px; padding-right:18px; }
@@ -506,358 +540,539 @@
   }
 </style>
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script>
+(function(){
+  "use strict";
 
-<script type="text/babel" data-presets="react">
-const { useState, useEffect, useCallback } = React;
+  var ADMIN_PASSWORD = "event2026";
+  var SLOT_CAPACITY = 50;
+  var WEBHOOK_URL = "https://hook.us2.make.com/a3bq87cxfft1s567cwbhkl6pu93nlciw";
+  var TIME_SLOTS = [
+    "10:00-11:00","11:00-12:00","12:00-13:00",
+    "13:00-14:00","14:00-15:00","15:00-16:00",
+    "16:00-17:00","17:00-18:00","18:00-19:00"
+  ];
 
-const ADMIN_PASSWORD = "event2026";
+  var root = document.getElementById('app-root');
 
-const TIME_SLOTS = [
-  "10:00-11:00","11:00-12:00","12:00-13:00",
-  "13:00-14:00","14:00-15:00","15:00-16:00",
-  "16:00-17:00","17:00-18:00","18:00-19:00"
-];
-
-function uid(){
-  return 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
-}
-
-function ReservationForm({ onSubmitted }){
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [referrer, setReferrer] = useState("");
-  const [ampm, setAmpm] = useState(null);
-  const [slot, setSlot] = useState(null);
-  const [errors, setErrors] = useState({});
-  const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState("");
-
-  const validate = () => {
-    const e = {};
-    if(!name.trim()) e.name = "お名前を入力してください";
-    if(!phone.trim()) e.phone = "電話番号を入力してください";
-    else if(!/^[0-9\-+() ]{8,}$/.test(phone.trim())) e.phone = "電話番号の形式を確認してください";
-    if(!email.trim()) e.email = "メールアドレスを入力してください";
-    else if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) e.email = "メールアドレスの形式を確認してください";
-    if(!slot) e.slot = "時間枠を選択してください";
-    if(!ampm) e.ampm = "午前・午後の希望を選択してください";
-    setErrors(e);
-    return Object.keys(e).length === 0;
+  // ---------------- state ----------------
+  var state = {
+    mode: "user",              // user | admin
+    adminUnlocked: false,
+    confirmedRecord: null,     // shown after successful submit
+    form: {
+      name: "", phone: "", email: "", referrer: "",
+      ampm: null, slot: null
+    },
+    errors: {},
+    formError: "",
+    submitting: false,
+    adminInput: "",
+    adminLockError: false,
+    reservations: [],
+    adminLoading: false,
+    boothDrafts: {},
+    savedFlash: {},
+    slotCounts: {},            // { "10:00-11:00": 12, ... }
+    slotCountsLoaded: false
   };
 
-  const handleSubmit = async () => {
-    setFormError("");
-    if(!validate()) return;
-    setSubmitting(true);
-    const record = {
-      id: uid(),
-      name: name.trim(),
-      phone: phone.trim(),
-      email: email.trim(),
-      referrer: referrer.trim() || "(なし)",
-      slot,
-      ampm,
-      booth: "",
-      createdAt: new Date().toISOString()
-    };
+  function uid(){
+    return 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  }
+
+  function countSlots(){
+    var listPromise;
     try{
-      const result = await window.storage.set('reservation:' + record.id, JSON.stringify(record), true);
-      if(!result){
-        setFormError("予約の保存に失敗しました。もう一度お試しください。");
-        setSubmitting(false);
+      listPromise = window.storage.list('reservation:', true);
+    }catch(err){
+      return Promise.reject(err);
+    }
+    return listPromise.then(function(listRes){
+      var keys = (listRes && listRes.keys) ? listRes.keys : [];
+      var items = [];
+      var chain = Promise.resolve();
+      keys.forEach(function(k){
+        chain = chain.then(function(){
+          return window.storage.get(k, true).then(function(got){
+            if(got && got.value){
+              try{ items.push(JSON.parse(got.value)); }catch(e){}
+            }
+          }).catch(function(){});
+        });
+      });
+      return chain.then(function(){ return items; });
+    }).then(function(items){
+      var counts = {};
+      TIME_SLOTS.forEach(function(t){ counts[t] = 0; });
+      items.forEach(function(r){
+        if(r && r.slot && counts.hasOwnProperty(r.slot)){
+          counts[r.slot] += 1;
+        }
+      });
+      return counts;
+    });
+  }
+
+  function refreshSlotCounts(thenRender){
+    countSlots().then(function(counts){
+      state.slotCounts = counts;
+      state.slotCountsLoaded = true;
+      if(thenRender) render();
+    }).catch(function(){
+      state.slotCountsLoaded = true;
+      if(thenRender) render();
+    });
+  }
+
+  function notifyWebhook(record){
+    // Send the reservation details to the Make.com webhook so it can
+    // trigger an automatic confirmation email. We don't block the UI
+    // on this, and a failure here doesn't affect the saved reservation.
+    if(!WEBHOOK_URL) return;
+    try{
+      fetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: record.name,
+          phone: record.phone,
+          email: record.email,
+          referrer: record.referrer,
+          slot: record.slot,
+          ampm: record.ampm,
+          createdAt: record.createdAt
+        })
+      }).catch(function(){ /* ignore network errors, reservation is already saved */ });
+    }catch(err){ /* ignore, reservation is already saved */ }
+  }
+
+  function escapeHtml(str){
+    return String(str)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;');
+  }
+
+  // ---------------- render ----------------
+  function render(){
+    var html = '';
+    html += '<div class="stage">';
+    html += '<div class="masthead">';
+    html += '<div class="eyebrow">Event Reservation</div>';
+    html += '<h1>イベント予約受付</h1>';
+    html += '<div class="sub">ご希望の時間帯をお選びください</div>';
+    html += '<div class="dotline"></div>';
+    html += '</div>';
+
+    html += '<div class="modebar">';
+    html += '<button data-action="switch-mode" data-mode="user" class="' + (state.mode === 'user' ? 'active' : '') + '">予約する</button>';
+    html += '<button data-action="switch-mode" data-mode="admin" class="' + (state.mode === 'admin' ? 'active' : '') + '">管理者用</button>';
+    html += '</div>';
+
+    if(state.mode === 'user'){
+      html += state.confirmedRecord ? renderConfirmation() : renderForm();
+    } else {
+      html += state.adminUnlocked ? renderAdminPanel() : renderAdminLock();
+    }
+
+    html += '</div>';
+    root.innerHTML = html;
+    attachListeners();
+  }
+
+  function renderForm(){
+    var f = state.form;
+    var errs = state.errors;
+    var html = '<div class="ticket">';
+    html += '<div class="ticket-top">';
+    html += '<div class="ticket-section-title">お客様情報</div>';
+
+    if(state.formError){
+      html += '<div class="form-error">' + escapeHtml(state.formError) + '</div>';
+    }
+
+    html += fieldHtml('name', 'お名前', 'text', f.name, '山田 太郎', errs.name);
+    html += fieldHtml('phone', '電話番号', 'tel', f.phone, '090-1234-5678', errs.phone);
+    html += fieldHtml('email', 'メールアドレス', 'email', f.email, 'taro@example.com', errs.email);
+    html += fieldHtml('referrer', '紹介者（任意）', 'text', f.referrer, '紹介してくれた方のお名前', null);
+
+    html += '<div class="ticket-section-title second">ご希望の時間</div>';
+
+    html += '<div class="field' + (errs.ampm ? ' err' : '') + '" style="margin-bottom:14px;">';
+    html += '<label>午前・午後の希望</label>';
+    html += '<div class="pillrow">';
+    html += '<div class="pill' + (f.ampm === '午前希望' ? ' selected' : '') + '" data-action="set-ampm" data-value="午前希望">午前希望</div>';
+    html += '<div class="pill' + (f.ampm === '午後希望' ? ' selected' : '') + '" data-action="set-ampm" data-value="午後希望">午後希望</div>';
+    html += '</div>';
+    if(errs.ampm) html += '<div class="err-msg">' + escapeHtml(errs.ampm) + '</div>';
+    html += '</div>';
+
+    html += '<div class="field' + (errs.slot ? ' err' : '') + '">';
+    html += '<label>時間枠（1時間ごと・各枠最大' + SLOT_CAPACITY + '名）</label>';
+    html += '<div class="timegrid">';
+    TIME_SLOTS.forEach(function(t){
+      var count = state.slotCounts[t] || 0;
+      var isFull = count >= SLOT_CAPACITY;
+      var classes = 'timeslot';
+      if(f.slot === t) classes += ' selected';
+      if(isFull && f.slot !== t) classes += ' full';
+      html += '<div class="' + classes + '" data-action="set-slot" data-value="' + t + '" data-full="' + (isFull ? '1' : '0') + '">' + t + '</div>';
+    });
+    html += '</div>';
+    if(errs.slot) html += '<div class="err-msg">' + escapeHtml(errs.slot) + '</div>';
+    html += '</div>';
+
+    html += '</div>'; // ticket-top
+
+    html += '<div class="perforation"></div>';
+
+    html += '<div class="ticket-bottom">';
+    html += '<button class="submit-btn" data-action="submit" ' + (state.submitting ? 'disabled' : '') + '>';
+    html += state.submitting ? '送信中...' : 'この内容で予約する';
+    html += '</button>';
+    html += '</div>';
+
+    html += '</div>'; // ticket
+    return html;
+  }
+
+  function fieldHtml(key, label, type, value, placeholder, error){
+    var html = '<div class="field' + (error ? ' err' : '') + '">';
+    html += '<label>' + label + '</label>';
+    html += '<input type="' + type + '" data-field="' + key + '" value="' + escapeHtml(value) + '" placeholder="' + escapeHtml(placeholder) + '" />';
+    if(error) html += '<div class="err-msg">' + escapeHtml(error) + '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  function renderConfirmation(){
+    var r = state.confirmedRecord;
+    var html = '<div class="ticket"><div class="confirm">';
+    html += '<div class="stamp-circle">✓</div>';
+    html += '<h2>予約を受け付けました</h2>';
+    html += '<p>当日は受付にてお名前をお伝えください。</p>';
+    html += '<div class="recap">';
+    html += '<div><span>お名前</span><span>' + escapeHtml(r.name) + '</span></div>';
+    html += '<div><span>時間枠</span><span>' + escapeHtml(r.slot) + '</span></div>';
+    html += '<div><span>希望</span><span>' + escapeHtml(r.ampm) + '</span></div>';
+    html += '<div><span>紹介者</span><span>' + escapeHtml(r.referrer) + '</span></div>';
+    html += '</div>';
+    html += '<button class="again" data-action="reset-form">もう一件予約する</button>';
+    html += '</div></div>';
+    return html;
+  }
+
+  function renderAdminLock(){
+    var html = '<div class="admin-lock">';
+    html += '<div class="lock-icon">🔒</div>';
+    html += '<h2>管理者用ページ</h2>';
+    html += '<p>予約一覧の確認にはパスワードが必要です</p>';
+    if(state.adminLockError){
+      html += '<div class="lock-err">パスワードが正しくありません</div>';
+    }
+    html += '<input type="password" id="admin-pass-input" placeholder="パスワード" value="' + escapeHtml(state.adminInput) + '" />';
+    html += '<button data-action="try-unlock">確認する</button>';
+    html += '</div>';
+    return html;
+  }
+
+  function renderAdminPanel(){
+    var html = '<div class="admin-panel">';
+    html += '<div class="admin-head"><h2>予約一覧</h2><span class="count-badge">' + state.reservations.length + '件</span></div>';
+    html += '<button class="refresh-btn" data-action="refresh-admin">一覧を更新</button>';
+
+    if(state.adminLoading){
+      html += '<div class="admin-empty">読み込み中...</div>';
+    } else if(state.reservations.length === 0){
+      html += '<div class="admin-empty">まだ予約はありません</div>';
+    } else {
+      state.reservations.forEach(function(r){
+        var draft = state.boothDrafts[r.id] !== undefined ? state.boothDrafts[r.id] : (r.booth || '');
+        html += '<div class="res-card" data-id="' + r.id + '">';
+        html += '<div class="res-top"><span class="res-name">' + escapeHtml(r.name) + '</span><span class="res-time">' + escapeHtml(r.slot) + '</span></div>';
+        html += '<div class="res-detail">';
+        html += '<div><b>希望:</b> ' + escapeHtml(r.ampm) + '</div>';
+        html += '<div><b>電話:</b> ' + escapeHtml(r.phone) + '</div>';
+        html += '<div><b>メール:</b> ' + escapeHtml(r.email) + '</div>';
+        html += '<div><b>紹介者:</b> ' + escapeHtml(r.referrer) + '</div>';
+        html += '</div>';
+        html += '<div class="booth-row">';
+        html += '<label>ブース:</label>';
+        html += '<input type="text" data-booth-id="' + r.id + '" value="' + escapeHtml(draft) + '" placeholder="未入力" />';
+        html += '<span class="saved-mark' + (state.savedFlash[r.id] ? ' show' : '') + '">保存済</span>';
+        html += '</div>';
+        html += '</div>';
+      });
+    }
+
+    html += '<button class="admin-logout" data-action="admin-logout">管理者ページを閉じる</button>';
+    html += '</div>';
+    return html;
+  }
+
+  // ---------------- validation & submit ----------------
+  function validate(){
+    var f = state.form;
+    var e = {};
+    if(!f.name.trim()) e.name = "お名前を入力してください";
+    if(!f.phone.trim()) e.phone = "電話番号を入力してください";
+    else if(!/^[0-9\-+() ]{8,}$/.test(f.phone.trim())) e.phone = "電話番号の形式を確認してください";
+    if(!f.email.trim()) e.email = "メールアドレスを入力してください";
+    else if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) e.email = "メールアドレスの形式を確認してください";
+    if(!f.slot) e.slot = "時間枠を選択してください";
+    else if((state.slotCounts[f.slot] || 0) >= SLOT_CAPACITY) e.slot = "この時間枠は満員です。別の時間枠を選んでください";
+    if(!f.ampm) e.ampm = "午前・午後の希望を選択してください";
+    state.errors = e;
+    return Object.keys(e).length === 0;
+  }
+
+  function submitForm(){
+    state.formError = "";
+    if(!validate()){
+      render();
+      return;
+    }
+    state.submitting = true;
+    render();
+
+    var f = state.form;
+
+    // Re-check capacity right before saving, in case another person
+    // filled the slot while this user had the form open.
+    countSlots().then(function(counts){
+      state.slotCounts = counts;
+      var currentCount = counts[f.slot] || 0;
+      if(currentCount >= SLOT_CAPACITY){
+        state.submitting = false;
+        state.formError = "この時間枠はちょうど満員になりました。別の時間枠を選んでください。";
+        state.form.slot = null;
+        render();
         return;
       }
-      onSubmitted(record);
-    }catch(err){
-      setFormError("予約の保存に失敗しました。もう一度お試しください。");
-      setSubmitting(false);
-    }
-  };
 
-  return (
-    <div className="ticket">
-      <div className="ticket-top">
-        <div className="ticket-section-title">お客様情報</div>
+      var record = {
+        id: uid(),
+        name: f.name.trim(),
+        phone: f.phone.trim(),
+        email: f.email.trim(),
+        referrer: f.referrer.trim() || "(なし)",
+        slot: f.slot,
+        ampm: f.ampm,
+        booth: "",
+        createdAt: new Date().toISOString()
+      };
 
-        {formError && <div className="form-error">{formError}</div>}
-
-        <div className={"field" + (errors.name ? " err" : "")}>
-          <label>お名前</label>
-          <input
-            type="text"
-            value={name}
-            placeholder="山田 太郎"
-            onChange={e => setName(e.target.value)}
-          />
-          {errors.name && <div className="err-msg">{errors.name}</div>}
-        </div>
-
-        <div className={"field" + (errors.phone ? " err" : "")}>
-          <label>電話番号</label>
-          <input
-            type="tel"
-            value={phone}
-            placeholder="090-1234-5678"
-            onChange={e => setPhone(e.target.value)}
-          />
-          {errors.phone && <div className="err-msg">{errors.phone}</div>}
-        </div>
-
-        <div className={"field" + (errors.email ? " err" : "")}>
-          <label>メールアドレス</label>
-          <input
-            type="email"
-            value={email}
-            placeholder="taro@example.com"
-            onChange={e => setEmail(e.target.value)}
-          />
-          {errors.email && <div className="err-msg">{errors.email}</div>}
-        </div>
-
-        <div className="field">
-          <label>紹介者（任意）</label>
-          <input
-            type="text"
-            value={referrer}
-            placeholder="紹介してくれた方のお名前"
-            onChange={e => setReferrer(e.target.value)}
-          />
-        </div>
-
-        <div className="ticket-section-title second">ご希望の時間</div>
-
-        <div className={"field" + (errors.ampm ? " err" : "")} style={{marginBottom:'14px'}}>
-          <label>午前・午後の希望</label>
-          <div className="pillrow">
-            <div
-              className={"pill" + (ampm === "午前希望" ? " selected" : "")}
-              onClick={() => setAmpm("午前希望")}
-            >午前希望</div>
-            <div
-              className={"pill" + (ampm === "午後希望" ? " selected" : "")}
-              onClick={() => setAmpm("午後希望")}
-            >午後希望</div>
-          </div>
-          {errors.ampm && <div className="err-msg">{errors.ampm}</div>}
-        </div>
-
-        <div className={"field" + (errors.slot ? " err" : "")}>
-          <label>時間枠（1時間ごと）</label>
-          <div className="timegrid">
-            {TIME_SLOTS.map(t => (
-              <div
-                key={t}
-                className={"timeslot" + (slot === t ? " selected" : "")}
-                onClick={() => setSlot(t)}
-              >{t}</div>
-            ))}
-          </div>
-          {errors.slot && <div className="err-msg">{errors.slot}</div>}
-        </div>
-      </div>
-
-      <div className="perforation"></div>
-
-      <div className="ticket-bottom">
-        <button className="submit-btn" disabled={submitting} onClick={handleSubmit}>
-          {submitting ? "送信中..." : "この内容で予約する"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Confirmation({ record, onAgain }){
-  return (
-    <div className="ticket">
-      <div className="confirm">
-        <div className="stamp-circle">✓</div>
-        <h2>予約を受け付けました</h2>
-        <p>当日は受付にてお名前をお伝えください。</p>
-        <div className="recap">
-          <div><span>お名前</span><span>{record.name}</span></div>
-          <div><span>時間枠</span><span>{record.slot}</span></div>
-          <div><span>希望</span><span>{record.ampm}</span></div>
-          <div><span>紹介者</span><span>{record.referrer}</span></div>
-        </div>
-        <button className="again" onClick={onAgain}>もう一件予約する</button>
-      </div>
-    </div>
-  );
-}
-
-function AdminLock({ onUnlock }){
-  const [input, setInput] = useState("");
-  const [error, setError] = useState(false);
-
-  const tryUnlock = () => {
-    if(input === ADMIN_PASSWORD){
-      onUnlock();
-    }else{
-      setError(true);
-    }
-  };
-
-  return (
-    <div className="admin-lock">
-      <div className="lock-icon">🔒</div>
-      <h2>管理者用ページ</h2>
-      <p>予約一覧の確認にはパスワードが必要です</p>
-      {error && <div className="lock-err">パスワードが正しくありません</div>}
-      <input
-        type="password"
-        value={input}
-        placeholder="パスワード"
-        onChange={e => { setInput(e.target.value); setError(false); }}
-        onKeyDown={e => { if(e.key === 'Enter') tryUnlock(); }}
-      />
-      <button onClick={tryUnlock}>確認する</button>
-    </div>
-  );
-}
-
-function AdminPanel({ onLogout }){
-  const [reservations, setReservations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [boothDrafts, setBoothDrafts] = useState({});
-  const [savedFlash, setSavedFlash] = useState({});
-
-  const loadAll = useCallback(async () => {
-    setLoading(true);
-    try{
-      const listRes = await window.storage.list('reservation:', true);
-      const keys = (listRes && listRes.keys) ? listRes.keys : [];
-      const items = [];
-      for(const k of keys){
-        try{
-          const got = await window.storage.get(k, true);
-          if(got && got.value){
-            items.push(JSON.parse(got.value));
-          }
-        }catch(e){ /* skip unreadable entry */ }
+      var savePromise;
+      try{
+        savePromise = window.storage.set('reservation:' + record.id, JSON.stringify(record), true);
+      }catch(err){
+        savePromise = Promise.reject(err);
       }
-      items.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
-      setReservations(items);
-      const drafts = {};
-      items.forEach(r => drafts[r.id] = r.booth || "");
-      setBoothDrafts(drafts);
-    }catch(e){
-      setReservations([]);
-    }
-    setLoading(false);
-  }, []);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+      savePromise.then(function(result){
+        state.submitting = false;
+        if(!result){
+          state.formError = "予約の保存に失敗しました。もう一度お試しください。";
+          render();
+          return;
+        }
+        notifyWebhook(record);
+        state.confirmedRecord = record;
+        render();
+      }).catch(function(){
+        state.submitting = false;
+        state.formError = "予約の保存に失敗しました。もう一度お試しください。";
+        render();
+      });
+    }).catch(function(){
+      state.submitting = false;
+      state.formError = "予約状況の確認に失敗しました。もう一度お試しください。";
+      render();
+    });
+  }
 
-  const saveBooth = async (record) => {
-    const newBooth = boothDrafts[record.id] || "";
-    const updated = { ...record, booth: newBooth };
+  function resetForm(){
+    state.form = { name:"", phone:"", email:"", referrer:"", ampm:null, slot:null };
+    state.errors = {};
+    state.formError = "";
+    state.confirmedRecord = null;
+    render();
+    refreshSlotCounts(true);
+  }
+
+  // ---------------- admin ----------------
+  function loadReservations(){
+    state.adminLoading = true;
+    render();
+
+    var listPromise;
     try{
-      const result = await window.storage.set('reservation:' + record.id, JSON.stringify(updated), true);
+      listPromise = window.storage.list('reservation:', true);
+    }catch(err){
+      listPromise = Promise.reject(err);
+    }
+
+    listPromise.then(function(listRes){
+      var keys = (listRes && listRes.keys) ? listRes.keys : [];
+      var items = [];
+      var chain = Promise.resolve();
+      keys.forEach(function(k){
+        chain = chain.then(function(){
+          return window.storage.get(k, true).then(function(got){
+            if(got && got.value){
+              try{ items.push(JSON.parse(got.value)); }catch(e){}
+            }
+          }).catch(function(){ /* skip unreadable entry */ });
+        });
+      });
+      return chain.then(function(){ return items; });
+    }).then(function(items){
+      items.sort(function(a,b){ return new Date(b.createdAt) - new Date(a.createdAt); });
+      state.reservations = items;
+      var drafts = {};
+      items.forEach(function(r){ drafts[r.id] = r.booth || ""; });
+      state.boothDrafts = drafts;
+      var counts = {};
+      TIME_SLOTS.forEach(function(t){ counts[t] = 0; });
+      items.forEach(function(r){
+        if(r && r.slot && counts.hasOwnProperty(r.slot)){
+          counts[r.slot] += 1;
+        }
+      });
+      state.slotCounts = counts;
+      state.adminLoading = false;
+      render();
+    }).catch(function(){
+      state.reservations = [];
+      state.adminLoading = false;
+      render();
+    });
+  }
+
+  function saveBooth(id){
+    var record = null;
+    for(var i=0;i<state.reservations.length;i++){
+      if(state.reservations[i].id === id){ record = state.reservations[i]; break; }
+    }
+    if(!record) return;
+    var newBooth = state.boothDrafts[id] !== undefined ? state.boothDrafts[id] : "";
+    var updated = Object.assign({}, record, { booth: newBooth });
+
+    var setPromise;
+    try{
+      setPromise = window.storage.set('reservation:' + id, JSON.stringify(updated), true);
+    }catch(err){
+      setPromise = Promise.reject(err);
+    }
+
+    setPromise.then(function(result){
       if(result){
-        setReservations(prev => prev.map(r => r.id === record.id ? updated : r));
-        setSavedFlash(prev => ({ ...prev, [record.id]: true }));
-        setTimeout(() => {
-          setSavedFlash(prev => ({ ...prev, [record.id]: false }));
+        for(var i=0;i<state.reservations.length;i++){
+          if(state.reservations[i].id === id){ state.reservations[i] = updated; break; }
+        }
+        state.savedFlash[id] = true;
+        render();
+        setTimeout(function(){
+          state.savedFlash[id] = false;
+          render();
         }, 1500);
       }
-    }catch(e){ /* save failed silently, user can retry */ }
-  };
+    }).catch(function(){ /* save failed silently, user can retry by editing again */ });
+  }
 
-  return (
-    <div className="admin-panel">
-      <div className="admin-head">
-        <h2>予約一覧</h2>
-        <span className="count-badge">{reservations.length}件</span>
-      </div>
+  // ---------------- event delegation ----------------
+  function attachListeners(){
+    root.querySelectorAll('[data-field]').forEach(function(input){
+      input.addEventListener('input', function(){
+        state.form[input.getAttribute('data-field')] = input.value;
+      });
+    });
 
-      {loading && <div className="admin-empty">読み込み中...</div>}
+    root.querySelectorAll('[data-action="set-ampm"]').forEach(function(el){
+      el.addEventListener('click', function(){
+        state.form.ampm = el.getAttribute('data-value');
+        render();
+      });
+    });
 
-      {!loading && reservations.length === 0 && (
-        <div className="admin-empty">まだ予約はありません</div>
-      )}
+    root.querySelectorAll('[data-action="set-slot"]').forEach(function(el){
+      el.addEventListener('click', function(){
+        if(el.getAttribute('data-full') === '1') return;
+        state.form.slot = el.getAttribute('data-value');
+        render();
+      });
+    });
 
-      {!loading && reservations.map(r => (
-        <div className="res-card" key={r.id}>
-          <div className="res-top">
-            <span className="res-name">{r.name}</span>
-            <span className="res-time">{r.slot}</span>
-          </div>
-          <div className="res-detail">
-            <div><b>希望:</b> {r.ampm}</div>
-            <div><b>電話:</b> {r.phone}</div>
-            <div><b>メール:</b> {r.email}</div>
-            <div><b>紹介者:</b> {r.referrer}</div>
-          </div>
-          <div className="booth-row">
-            <label>ブース:</label>
-            <input
-              type="text"
-              value={boothDrafts[r.id] || ""}
-              placeholder="未入力"
-              onChange={e => setBoothDrafts(prev => ({ ...prev, [r.id]: e.target.value }))}
-              onBlur={() => saveBooth(r)}
-              onKeyDown={e => { if(e.key === 'Enter') saveBooth(r); }}
-            />
-            <span className={"saved-mark" + (savedFlash[r.id] ? " show" : "")}>保存済</span>
-          </div>
-        </div>
-      ))}
+    var submitBtn = root.querySelector('[data-action="submit"]');
+    if(submitBtn) submitBtn.addEventListener('click', submitForm);
 
-      <button className="admin-logout" onClick={onLogout}>管理者ページを閉じる</button>
-    </div>
-  );
-}
+    var resetBtn = root.querySelector('[data-action="reset-form"]');
+    if(resetBtn) resetBtn.addEventListener('click', resetForm);
 
-function App(){
-  const [mode, setMode] = useState("user"); // user | admin
-  const [adminUnlocked, setAdminUnlocked] = useState(false);
-  const [confirmedRecord, setConfirmedRecord] = useState(null);
+    root.querySelectorAll('[data-action="switch-mode"]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var m = el.getAttribute('data-mode');
+        state.mode = m;
+        if(m === 'user'){ state.confirmedRecord = null; }
+        if(m === 'admin' && state.adminUnlocked){ loadReservations(); }
+        render();
+      });
+    });
 
-  const switchMode = (m) => {
-    setMode(m);
-    if(m === "user") setConfirmedRecord(null);
-  };
+    var unlockBtn = root.querySelector('[data-action="try-unlock"]');
+    if(unlockBtn){
+      unlockBtn.addEventListener('click', tryUnlock);
+    }
+    var passInput = document.getElementById('admin-pass-input');
+    if(passInput){
+      passInput.addEventListener('input', function(){ state.adminInput = passInput.value; });
+      passInput.addEventListener('keydown', function(e){
+        if(e.key === 'Enter') tryUnlock();
+      });
+    }
 
-  return (
-    <div className="stage">
-      <div className="masthead">
-        <div className="eyebrow">Event Reservation</div>
-        <h1>イベント予約受付</h1>
-        <div className="sub">ご希望の時間帯をお選びください</div>
-        <div className="dotline"></div>
-      </div>
+    var refreshBtn = root.querySelector('[data-action="refresh-admin"]');
+    if(refreshBtn) refreshBtn.addEventListener('click', loadReservations);
 
-      <div className="modebar">
-        <button
-          className={mode === "user" ? "active" : ""}
-          onClick={() => switchMode("user")}
-        >予約する</button>
-        <button
-          className={mode === "admin" ? "active" : ""}
-          onClick={() => switchMode("admin")}
-        >管理者用</button>
-      </div>
+    var logoutBtn = root.querySelector('[data-action="admin-logout"]');
+    if(logoutBtn){
+      logoutBtn.addEventListener('click', function(){
+        state.adminUnlocked = false;
+        render();
+      });
+    }
 
-      {mode === "user" && (
-        confirmedRecord
-          ? <Confirmation record={confirmedRecord} onAgain={() => setConfirmedRecord(null)} />
-          : <ReservationForm onSubmitted={setConfirmedRecord} />
-      )}
+    root.querySelectorAll('[data-booth-id]').forEach(function(input){
+      var id = input.getAttribute('data-booth-id');
+      input.addEventListener('input', function(){
+        state.boothDrafts[id] = input.value;
+      });
+      input.addEventListener('blur', function(){
+        saveBooth(id);
+      });
+      input.addEventListener('keydown', function(e){
+        if(e.key === 'Enter') saveBooth(id);
+      });
+    });
+  }
 
-      {mode === "admin" && (
-        adminUnlocked
-          ? <AdminPanel onLogout={() => setAdminUnlocked(false)} />
-          : <AdminLock onUnlock={() => setAdminUnlocked(true)} />
-      )}
-    </div>
-  );
-}
+  function tryUnlock(){
+    if(state.adminInput === ADMIN_PASSWORD){
+      state.adminUnlocked = true;
+      state.adminLockError = false;
+      state.adminInput = "";
+      render();
+      loadReservations();
+    } else {
+      state.adminLockError = true;
+      render();
+    }
+  }
 
-const root = ReactDOM.createRoot(document.getElementById('app-root'));
-root.render(<App />);
+  render();
+  refreshSlotCounts(true);
+})();
 </script>
