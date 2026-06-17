@@ -1,0 +1,863 @@
+<div id="app-root"></div>
+<style>
+  :root{
+    --paper:#F6F0E4;
+    --paper-deep:#ECE2CC;
+    --ink:#23262E;
+    --ink-soft:#5B5E68;
+    --stamp:#C4451F;
+    --stamp-deep:#9C3215;
+    --line:#D8CBA8;
+    --green-ok:#3E6B4F;
+  }
+
+  *{box-sizing:border-box;}
+
+  #app-root{
+    font-family:'Zen Kaku Gothic New','Noto Sans JP',-apple-system,sans-serif;
+    color:var(--ink);
+    background:transparent;
+    padding:0;
+    min-height:100%;
+  }
+
+  .stage{
+    max-width:560px;
+    margin:0 auto;
+    padding:28px 18px 60px;
+  }
+
+  /* ---------- Header ---------- */
+  .masthead{
+    text-align:center;
+    margin-bottom:26px;
+    position:relative;
+  }
+  .masthead .eyebrow{
+    font-size:11px;
+    letter-spacing:.18em;
+    color:var(--stamp);
+    font-weight:700;
+    text-transform:uppercase;
+  }
+  .masthead h1{
+    font-family:'Zen Old Mincho','Noto Serif JP',serif;
+    font-size:30px;
+    font-weight:700;
+    margin:6px 0 4px;
+    letter-spacing:.02em;
+  }
+  .masthead .sub{
+    font-size:13px;
+    color:var(--ink-soft);
+  }
+  .masthead .dotline{
+    margin-top:18px;
+    height:1px;
+    background-image:repeating-linear-gradient(to right, var(--line) 0 6px, transparent 6px 12px);
+  }
+
+  /* ---------- Mode toggle (user / admin) ---------- */
+  .modebar{
+    display:flex;
+    justify-content:center;
+    gap:8px;
+    margin-bottom:22px;
+  }
+  .modebar button{
+    font-family:inherit;
+    font-size:12px;
+    letter-spacing:.04em;
+    padding:7px 14px;
+    border-radius:999px;
+    border:1px solid var(--line);
+    background:var(--paper-deep);
+    color:var(--ink-soft);
+    cursor:pointer;
+    transition:.15s ease;
+  }
+  .modebar button.active{
+    background:var(--ink);
+    color:var(--paper);
+    border-color:var(--ink);
+  }
+
+  /* ---------- Ticket card ---------- */
+  .ticket{
+    position:relative;
+    background:#FFFDF8;
+    border:1px solid var(--line);
+    border-radius:14px;
+    box-shadow:0 1px 0 rgba(35,38,46,.04), 0 14px 30px -18px rgba(35,38,46,.35);
+    overflow:hidden;
+  }
+  .ticket-top{
+    padding:26px 26px 22px;
+  }
+  .ticket-section-title{
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--stamp);
+    font-weight:700;
+    margin:0 0 14px;
+  }
+  .ticket-section-title.second{
+    margin-top:26px;
+  }
+
+  .field{
+    margin-bottom:16px;
+  }
+  .field label{
+    display:block;
+    font-size:12.5px;
+    color:var(--ink-soft);
+    margin-bottom:6px;
+    font-weight:600;
+  }
+  .field input{
+    width:100%;
+    font-family:inherit;
+    font-size:15px;
+    padding:11px 13px;
+    border:1.4px solid var(--line);
+    border-radius:8px;
+    background:var(--paper);
+    color:var(--ink);
+    transition:.15s ease;
+  }
+  .field input:focus{
+    outline:none;
+    border-color:var(--stamp);
+    background:#fff;
+    box-shadow:0 0 0 3px rgba(196,69,31,.12);
+  }
+  .field .hint{
+    font-size:11px;
+    color:#A9A18A;
+    margin-top:4px;
+  }
+  .field.err input{
+    border-color:var(--stamp-deep);
+    background:#FFF3EE;
+  }
+  .field .err-msg{
+    font-size:11.5px;
+    color:var(--stamp-deep);
+    margin-top:5px;
+    font-weight:600;
+  }
+
+  /* AM/PM pills */
+  .pillrow{
+    display:flex;
+    gap:10px;
+  }
+  .pill{
+    flex:1;
+    text-align:center;
+    padding:11px 8px;
+    border:1.4px solid var(--line);
+    border-radius:8px;
+    font-size:13.5px;
+    font-weight:700;
+    color:var(--ink-soft);
+    cursor:pointer;
+    background:var(--paper);
+    transition:.15s ease;
+    user-select:none;
+  }
+  .pill:hover{ border-color:#C7B98C; }
+  .pill.selected{
+    background:var(--ink);
+    border-color:var(--ink);
+    color:var(--paper);
+  }
+
+  /* Time grid - ticket stub style */
+  .timegrid{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:9px;
+  }
+  .timeslot{
+    position:relative;
+    text-align:center;
+    padding:12px 4px 11px;
+    border:1.4px dashed var(--line);
+    border-radius:8px;
+    font-size:13px;
+    font-weight:700;
+    color:var(--ink-soft);
+    cursor:pointer;
+    background:var(--paper);
+    transition:.15s ease;
+    user-select:none;
+    letter-spacing:.01em;
+  }
+  .timeslot:hover{ border-color:#C7B98C; background:#fff; }
+  .timeslot.selected{
+    background:var(--stamp);
+    border-color:var(--stamp);
+    border-style:solid;
+    color:#fff;
+    transform:scale(0.97);
+  }
+  .timeslot.selected::after{
+    content:'✓ 受付';
+    display:block;
+    font-size:9.5px;
+    letter-spacing:.08em;
+    margin-top:2px;
+    opacity:.9;
+    font-weight:600;
+  }
+
+  /* Perforation between ticket halves */
+  .perforation{
+    position:relative;
+    height:0;
+    border-top:2px dashed var(--line);
+    margin:0 26px;
+  }
+  .perforation::before, .perforation::after{
+    content:'';
+    position:absolute;
+    width:18px; height:18px;
+    background:var(--paper-deep);
+    border-radius:50%;
+    top:-9px;
+  }
+  .perforation::before{ left:-35px; }
+  .perforation::after{ right:-35px; }
+
+  .ticket-bottom{
+    padding:20px 26px 26px;
+    background:linear-gradient(180deg, rgba(196,69,31,.03), transparent);
+  }
+
+  .submit-btn{
+    width:100%;
+    font-family:inherit;
+    font-size:15.5px;
+    font-weight:700;
+    letter-spacing:.04em;
+    padding:14px;
+    border:none;
+    border-radius:9px;
+    background:var(--stamp);
+    color:#fff;
+    cursor:pointer;
+    transition:.15s ease;
+    margin-top:6px;
+  }
+  .submit-btn:hover{ background:var(--stamp-deep); }
+  .submit-btn:active{ transform:scale(.99); }
+  .submit-btn:disabled{ background:#D8CBA8; cursor:not-allowed; }
+
+  .form-error{
+    font-size:12.5px;
+    color:var(--stamp-deep);
+    background:#FFF3EE;
+    border:1px solid #F0CFC2;
+    border-radius:8px;
+    padding:10px 12px;
+    margin-bottom:14px;
+    font-weight:600;
+  }
+
+  /* ---------- Confirmation ---------- */
+  .confirm{
+    text-align:center;
+    padding:50px 26px 44px;
+  }
+  .confirm .stamp-circle{
+    width:74px;height:74px;
+    margin:0 auto 18px;
+    border-radius:50%;
+    border:3px solid var(--green-ok);
+    display:flex;align-items:center;justify-content:center;
+    color:var(--green-ok);
+    font-size:34px;
+    transform:rotate(-8deg);
+  }
+  .confirm h2{
+    font-family:'Zen Old Mincho','Noto Serif JP',serif;
+    font-size:22px;
+    margin:0 0 8px;
+  }
+  .confirm p{
+    font-size:13.5px;
+    color:var(--ink-soft);
+    line-height:1.7;
+    margin:0 0 4px;
+  }
+  .confirm .recap{
+    margin-top:22px;
+    text-align:left;
+    background:var(--paper);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:16px 18px;
+    font-size:13px;
+  }
+  .confirm .recap div{
+    display:flex;
+    justify-content:space-between;
+    padding:5px 0;
+    border-bottom:1px dashed var(--line);
+  }
+  .confirm .recap div:last-child{ border-bottom:none; }
+  .confirm .recap span:first-child{ color:var(--ink-soft); }
+  .confirm .recap span:last-child{ font-weight:700; }
+  .confirm .again{
+    margin-top:20px;
+    background:none;
+    border:1.4px solid var(--ink);
+    color:var(--ink);
+    padding:10px 20px;
+    border-radius:999px;
+    font-size:13px;
+    font-weight:700;
+    cursor:pointer;
+    font-family:inherit;
+  }
+
+  /* ---------- Admin ---------- */
+  .admin-lock{
+    background:#FFFDF8;
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:40px 30px;
+    text-align:center;
+  }
+  .admin-lock .lock-icon{
+    font-size:30px;
+    margin-bottom:10px;
+  }
+  .admin-lock h2{
+    font-family:'Zen Old Mincho','Noto Serif JP',serif;
+    font-size:19px;
+    margin:0 0 6px;
+  }
+  .admin-lock p{
+    font-size:12.5px;
+    color:var(--ink-soft);
+    margin:0 0 18px;
+  }
+  .admin-lock input{
+    width:100%;
+    font-family:inherit;
+    font-size:15px;
+    padding:11px 13px;
+    border:1.4px solid var(--line);
+    border-radius:8px;
+    background:var(--paper);
+    text-align:center;
+    margin-bottom:12px;
+  }
+  .admin-lock button{
+    width:100%;
+    font-family:inherit;
+    font-weight:700;
+    font-size:14px;
+    padding:11px;
+    border:none;
+    border-radius:8px;
+    background:var(--ink);
+    color:var(--paper);
+    cursor:pointer;
+  }
+  .admin-lock .lock-err{
+    font-size:12px;
+    color:var(--stamp-deep);
+    font-weight:700;
+    margin-bottom:10px;
+  }
+
+  .admin-panel{
+    background:#FFFDF8;
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:22px;
+  }
+  .admin-panel .admin-head{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin-bottom:16px;
+  }
+  .admin-panel .admin-head h2{
+    font-family:'Zen Old Mincho','Noto Serif JP',serif;
+    font-size:18px;
+    margin:0;
+  }
+  .admin-panel .count-badge{
+    font-size:12px;
+    background:var(--stamp);
+    color:#fff;
+    padding:4px 10px;
+    border-radius:999px;
+    font-weight:700;
+  }
+  .admin-empty{
+    text-align:center;
+    padding:40px 10px;
+    color:var(--ink-soft);
+    font-size:13px;
+  }
+  .res-card{
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:14px 16px;
+    margin-bottom:12px;
+    background:var(--paper);
+  }
+  .res-card .res-top{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    margin-bottom:8px;
+  }
+  .res-card .res-name{
+    font-weight:700;
+    font-size:15px;
+  }
+  .res-card .res-time{
+    font-size:11.5px;
+    font-weight:700;
+    color:#fff;
+    background:var(--stamp);
+    padding:3px 9px;
+    border-radius:999px;
+    white-space:nowrap;
+  }
+  .res-card .res-detail{
+    font-size:12.5px;
+    color:var(--ink-soft);
+    line-height:1.7;
+  }
+  .res-card .res-detail b{
+    color:var(--ink);
+    font-weight:600;
+  }
+  .res-card .booth-row{
+    margin-top:10px;
+    padding-top:10px;
+    border-top:1px dashed var(--line);
+    display:flex;
+    gap:8px;
+    align-items:center;
+  }
+  .res-card .booth-row label{
+    font-size:11.5px;
+    font-weight:700;
+    color:var(--ink-soft);
+    white-space:nowrap;
+  }
+  .res-card .booth-row input{
+    flex:1;
+    font-family:inherit;
+    font-size:13px;
+    padding:7px 10px;
+    border:1.4px solid var(--line);
+    border-radius:6px;
+    background:#fff;
+  }
+  .res-card .booth-row input:focus{
+    outline:none;
+    border-color:var(--stamp);
+  }
+  .res-card .booth-row .saved-mark{
+    font-size:11px;
+    color:var(--green-ok);
+    font-weight:700;
+    width:36px;
+    text-align:center;
+    opacity:0;
+    transition:opacity .2s;
+  }
+  .res-card .booth-row .saved-mark.show{ opacity:1; }
+
+  .admin-logout{
+    display:block;
+    margin:18px auto 0;
+    background:none;
+    border:none;
+    color:var(--ink-soft);
+    font-size:12px;
+    text-decoration:underline;
+    cursor:pointer;
+    font-family:inherit;
+  }
+
+  .loading-msg{
+    text-align:center;
+    padding:40px;
+    color:var(--ink-soft);
+    font-size:13px;
+  }
+
+  @media (max-width:380px){
+    .timegrid{ grid-template-columns:repeat(3,1fr); }
+    .ticket-top, .ticket-bottom{ padding-left:18px; padding-right:18px; }
+    .perforation{ margin:0 18px; }
+  }
+</style>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+const ADMIN_PASSWORD = "event2026";
+
+const TIME_SLOTS = [
+  "10:00-11:00","11:00-12:00","12:00-13:00",
+  "13:00-14:00","14:00-15:00","15:00-16:00",
+  "16:00-17:00","17:00-18:00","18:00-19:00"
+];
+
+function uid(){
+  return 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+}
+
+function ReservationForm({ onSubmitted }){
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [referrer, setReferrer] = useState("");
+  const [ampm, setAmpm] = useState(null);
+  const [slot, setSlot] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const validate = () => {
+    const e = {};
+    if(!name.trim()) e.name = "お名前を入力してください";
+    if(!phone.trim()) e.phone = "電話番号を入力してください";
+    else if(!/^[0-9\-+() ]{8,}$/.test(phone.trim())) e.phone = "電話番号の形式を確認してください";
+    if(!email.trim()) e.email = "メールアドレスを入力してください";
+    else if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) e.email = "メールアドレスの形式を確認してください";
+    if(!slot) e.slot = "時間枠を選択してください";
+    if(!ampm) e.ampm = "午前・午後の希望を選択してください";
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const handleSubmit = async () => {
+    setFormError("");
+    if(!validate()) return;
+    setSubmitting(true);
+    const record = {
+      id: uid(),
+      name: name.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      referrer: referrer.trim() || "(なし)",
+      slot,
+      ampm,
+      booth: "",
+      createdAt: new Date().toISOString()
+    };
+    try{
+      const result = await window.storage.set('reservation:' + record.id, JSON.stringify(record), true);
+      if(!result){
+        setFormError("予約の保存に失敗しました。もう一度お試しください。");
+        setSubmitting(false);
+        return;
+      }
+      onSubmitted(record);
+    }catch(err){
+      setFormError("予約の保存に失敗しました。もう一度お試しください。");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="ticket">
+      <div className="ticket-top">
+        <div className="ticket-section-title">お客様情報</div>
+
+        {formError && <div className="form-error">{formError}</div>}
+
+        <div className={"field" + (errors.name ? " err" : "")}>
+          <label>お名前</label>
+          <input
+            type="text"
+            value={name}
+            placeholder="山田 太郎"
+            onChange={e => setName(e.target.value)}
+          />
+          {errors.name && <div className="err-msg">{errors.name}</div>}
+        </div>
+
+        <div className={"field" + (errors.phone ? " err" : "")}>
+          <label>電話番号</label>
+          <input
+            type="tel"
+            value={phone}
+            placeholder="090-1234-5678"
+            onChange={e => setPhone(e.target.value)}
+          />
+          {errors.phone && <div className="err-msg">{errors.phone}</div>}
+        </div>
+
+        <div className={"field" + (errors.email ? " err" : "")}>
+          <label>メールアドレス</label>
+          <input
+            type="email"
+            value={email}
+            placeholder="taro@example.com"
+            onChange={e => setEmail(e.target.value)}
+          />
+          {errors.email && <div className="err-msg">{errors.email}</div>}
+        </div>
+
+        <div className="field">
+          <label>紹介者（任意）</label>
+          <input
+            type="text"
+            value={referrer}
+            placeholder="紹介してくれた方のお名前"
+            onChange={e => setReferrer(e.target.value)}
+          />
+        </div>
+
+        <div className="ticket-section-title second">ご希望の時間</div>
+
+        <div className={"field" + (errors.ampm ? " err" : "")} style={{marginBottom:'14px'}}>
+          <label>午前・午後の希望</label>
+          <div className="pillrow">
+            <div
+              className={"pill" + (ampm === "午前希望" ? " selected" : "")}
+              onClick={() => setAmpm("午前希望")}
+            >午前希望</div>
+            <div
+              className={"pill" + (ampm === "午後希望" ? " selected" : "")}
+              onClick={() => setAmpm("午後希望")}
+            >午後希望</div>
+          </div>
+          {errors.ampm && <div className="err-msg">{errors.ampm}</div>}
+        </div>
+
+        <div className={"field" + (errors.slot ? " err" : "")}>
+          <label>時間枠（1時間ごと）</label>
+          <div className="timegrid">
+            {TIME_SLOTS.map(t => (
+              <div
+                key={t}
+                className={"timeslot" + (slot === t ? " selected" : "")}
+                onClick={() => setSlot(t)}
+              >{t}</div>
+            ))}
+          </div>
+          {errors.slot && <div className="err-msg">{errors.slot}</div>}
+        </div>
+      </div>
+
+      <div className="perforation"></div>
+
+      <div className="ticket-bottom">
+        <button className="submit-btn" disabled={submitting} onClick={handleSubmit}>
+          {submitting ? "送信中..." : "この内容で予約する"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Confirmation({ record, onAgain }){
+  return (
+    <div className="ticket">
+      <div className="confirm">
+        <div className="stamp-circle">✓</div>
+        <h2>予約を受け付けました</h2>
+        <p>当日は受付にてお名前をお伝えください。</p>
+        <div className="recap">
+          <div><span>お名前</span><span>{record.name}</span></div>
+          <div><span>時間枠</span><span>{record.slot}</span></div>
+          <div><span>希望</span><span>{record.ampm}</span></div>
+          <div><span>紹介者</span><span>{record.referrer}</span></div>
+        </div>
+        <button className="again" onClick={onAgain}>もう一件予約する</button>
+      </div>
+    </div>
+  );
+}
+
+function AdminLock({ onUnlock }){
+  const [input, setInput] = useState("");
+  const [error, setError] = useState(false);
+
+  const tryUnlock = () => {
+    if(input === ADMIN_PASSWORD){
+      onUnlock();
+    }else{
+      setError(true);
+    }
+  };
+
+  return (
+    <div className="admin-lock">
+      <div className="lock-icon">🔒</div>
+      <h2>管理者用ページ</h2>
+      <p>予約一覧の確認にはパスワードが必要です</p>
+      {error && <div className="lock-err">パスワードが正しくありません</div>}
+      <input
+        type="password"
+        value={input}
+        placeholder="パスワード"
+        onChange={e => { setInput(e.target.value); setError(false); }}
+        onKeyDown={e => { if(e.key === 'Enter') tryUnlock(); }}
+      />
+      <button onClick={tryUnlock}>確認する</button>
+    </div>
+  );
+}
+
+function AdminPanel({ onLogout }){
+  const [reservations, setReservations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [boothDrafts, setBoothDrafts] = useState({});
+  const [savedFlash, setSavedFlash] = useState({});
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    try{
+      const listRes = await window.storage.list('reservation:', true);
+      const keys = (listRes && listRes.keys) ? listRes.keys : [];
+      const items = [];
+      for(const k of keys){
+        try{
+          const got = await window.storage.get(k, true);
+          if(got && got.value){
+            items.push(JSON.parse(got.value));
+          }
+        }catch(e){ /* skip unreadable entry */ }
+      }
+      items.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setReservations(items);
+      const drafts = {};
+      items.forEach(r => drafts[r.id] = r.booth || "");
+      setBoothDrafts(drafts);
+    }catch(e){
+      setReservations([]);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  const saveBooth = async (record) => {
+    const newBooth = boothDrafts[record.id] || "";
+    const updated = { ...record, booth: newBooth };
+    try{
+      const result = await window.storage.set('reservation:' + record.id, JSON.stringify(updated), true);
+      if(result){
+        setReservations(prev => prev.map(r => r.id === record.id ? updated : r));
+        setSavedFlash(prev => ({ ...prev, [record.id]: true }));
+        setTimeout(() => {
+          setSavedFlash(prev => ({ ...prev, [record.id]: false }));
+        }, 1500);
+      }
+    }catch(e){ /* save failed silently, user can retry */ }
+  };
+
+  return (
+    <div className="admin-panel">
+      <div className="admin-head">
+        <h2>予約一覧</h2>
+        <span className="count-badge">{reservations.length}件</span>
+      </div>
+
+      {loading && <div className="admin-empty">読み込み中...</div>}
+
+      {!loading && reservations.length === 0 && (
+        <div className="admin-empty">まだ予約はありません</div>
+      )}
+
+      {!loading && reservations.map(r => (
+        <div className="res-card" key={r.id}>
+          <div className="res-top">
+            <span className="res-name">{r.name}</span>
+            <span className="res-time">{r.slot}</span>
+          </div>
+          <div className="res-detail">
+            <div><b>希望:</b> {r.ampm}</div>
+            <div><b>電話:</b> {r.phone}</div>
+            <div><b>メール:</b> {r.email}</div>
+            <div><b>紹介者:</b> {r.referrer}</div>
+          </div>
+          <div className="booth-row">
+            <label>ブース:</label>
+            <input
+              type="text"
+              value={boothDrafts[r.id] || ""}
+              placeholder="未入力"
+              onChange={e => setBoothDrafts(prev => ({ ...prev, [r.id]: e.target.value }))}
+              onBlur={() => saveBooth(r)}
+              onKeyDown={e => { if(e.key === 'Enter') saveBooth(r); }}
+            />
+            <span className={"saved-mark" + (savedFlash[r.id] ? " show" : "")}>保存済</span>
+          </div>
+        </div>
+      ))}
+
+      <button className="admin-logout" onClick={onLogout}>管理者ページを閉じる</button>
+    </div>
+  );
+}
+
+function App(){
+  const [mode, setMode] = useState("user"); // user | admin
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [confirmedRecord, setConfirmedRecord] = useState(null);
+
+  const switchMode = (m) => {
+    setMode(m);
+    if(m === "user") setConfirmedRecord(null);
+  };
+
+  return (
+    <div className="stage">
+      <div className="masthead">
+        <div className="eyebrow">Event Reservation</div>
+        <h1>イベント予約受付</h1>
+        <div className="sub">ご希望の時間帯をお選びください</div>
+        <div className="dotline"></div>
+      </div>
+
+      <div className="modebar">
+        <button
+          className={mode === "user" ? "active" : ""}
+          onClick={() => switchMode("user")}
+        >予約する</button>
+        <button
+          className={mode === "admin" ? "active" : ""}
+          onClick={() => switchMode("admin")}
+        >管理者用</button>
+      </div>
+
+      {mode === "user" && (
+        confirmedRecord
+          ? <Confirmation record={confirmedRecord} onAgain={() => setConfirmedRecord(null)} />
+          : <ReservationForm onSubmitted={setConfirmedRecord} />
+      )}
+
+      {mode === "admin" && (
+        adminUnlocked
+          ? <AdminPanel onLogout={() => setAdminUnlocked(false)} />
+          : <AdminLock onUnlock={() => setAdminUnlocked(true)} />
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('app-root'));
+root.render(<App />);
+</script>
