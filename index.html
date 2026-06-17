@@ -699,18 +699,17 @@
     html += fieldHtml('email', 'メールアドレス', 'email', f.email, 'taro@example.com', errs.email);
     html += fieldHtml('referrer', '紹介者（任意）', 'text', f.referrer, '紹介してくれた方のお名前', null);
 
-    html += '<div class="ticket-section-title second">ご希望の時間</div>';
+    html += '<div class="ticket-section-title second">ご希望の時間（いずれか1つを選択）</div>';
 
-    html += '<div class="field' + (errs.ampm ? ' err' : '') + '" style="margin-bottom:14px;">';
+    html += '<div class="field' + (errs.choice ? ' err' : '') + '" style="margin-bottom:14px;">';
     html += '<label>午前・午後の希望</label>';
     html += '<div class="pillrow">';
     html += '<div class="pill' + (f.ampm === '午前希望' ? ' selected' : '') + '" data-action="set-ampm" data-value="午前希望">午前希望</div>';
     html += '<div class="pill' + (f.ampm === '午後希望' ? ' selected' : '') + '" data-action="set-ampm" data-value="午後希望">午後希望</div>';
     html += '</div>';
-    if(errs.ampm) html += '<div class="err-msg">' + escapeHtml(errs.ampm) + '</div>';
     html += '</div>';
 
-    html += '<div class="field' + (errs.slot ? ' err' : '') + '">';
+    html += '<div class="field' + (errs.choice ? ' err' : '') + '">';
     html += '<label>時間枠（1時間ごと・各枠最大' + SLOT_CAPACITY + '名）</label>';
     html += '<div class="timegrid">';
     TIME_SLOTS.forEach(function(t){
@@ -722,7 +721,7 @@
       html += '<div class="' + classes + '" data-action="set-slot" data-value="' + t + '" data-full="' + (isFull ? '1' : '0') + '">' + t + '</div>';
     });
     html += '</div>';
-    if(errs.slot) html += '<div class="err-msg">' + escapeHtml(errs.slot) + '</div>';
+    if(errs.choice) html += '<div class="err-msg">' + escapeHtml(errs.choice) + '</div>';
     html += '</div>';
 
     html += '</div>'; // ticket-top
@@ -748,6 +747,10 @@
     return html;
   }
 
+  function describeChoice(r){
+    return r.slot ? r.slot : (r.ampm || "");
+  }
+
   function renderConfirmation(){
     var r = state.confirmedRecord;
     var html = '<div class="ticket"><div class="confirm">';
@@ -756,8 +759,7 @@
     html += '<p>当日は受付にてお名前をお伝えください。</p>';
     html += '<div class="recap">';
     html += '<div><span>お名前</span><span>' + escapeHtml(r.name) + '</span></div>';
-    html += '<div><span>時間枠</span><span>' + escapeHtml(r.slot) + '</span></div>';
-    html += '<div><span>希望</span><span>' + escapeHtml(r.ampm) + '</span></div>';
+    html += '<div><span>ご希望</span><span>' + escapeHtml(describeChoice(r)) + '</span></div>';
     html += '<div><span>紹介者</span><span>' + escapeHtml(r.referrer) + '</span></div>';
     html += '</div>';
     html += '<button class="again" data-action="reset-form">もう一件予約する</button>';
@@ -792,9 +794,8 @@
       state.reservations.forEach(function(r){
         var draft = state.boothDrafts[r.id] !== undefined ? state.boothDrafts[r.id] : (r.booth || '');
         html += '<div class="res-card" data-id="' + r.id + '">';
-        html += '<div class="res-top"><span class="res-name">' + escapeHtml(r.name) + '</span><span class="res-time">' + escapeHtml(r.slot) + '</span></div>';
+        html += '<div class="res-top"><span class="res-name">' + escapeHtml(r.name) + '</span><span class="res-time">' + escapeHtml(describeChoice(r)) + '</span></div>';
         html += '<div class="res-detail">';
-        html += '<div><b>希望:</b> ' + escapeHtml(r.ampm) + '</div>';
         html += '<div><b>電話:</b> ' + escapeHtml(r.phone) + '</div>';
         html += '<div><b>メール:</b> ' + escapeHtml(r.email) + '</div>';
         html += '<div><b>紹介者:</b> ' + escapeHtml(r.referrer) + '</div>';
@@ -822,9 +823,13 @@
     else if(!/^[0-9\-+() ]{8,}$/.test(f.phone.trim())) e.phone = "電話番号の形式を確認してください";
     if(!f.email.trim()) e.email = "メールアドレスを入力してください";
     else if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) e.email = "メールアドレスの形式を確認してください";
-    if(!f.slot) e.slot = "時間枠を選択してください";
-    else if((state.slotCounts[f.slot] || 0) >= SLOT_CAPACITY) e.slot = "この時間枠は満員です。別の時間枠を選んでください";
-    if(!f.ampm) e.ampm = "午前・午後の希望を選択してください";
+
+    if(!f.slot && !f.ampm){
+      e.choice = "午前・午後の希望、または時間枠のいずれかを選択してください";
+    } else if(f.slot && (state.slotCounts[f.slot] || 0) >= SLOT_CAPACITY){
+      e.choice = "この時間枠は満員です。別の時間枠を選んでください";
+    }
+
     state.errors = e;
     return Object.keys(e).length === 0;
   }
@@ -844,13 +849,15 @@
     // filled the slot while this user had the form open.
     countSlots().then(function(counts){
       state.slotCounts = counts;
-      var currentCount = counts[f.slot] || 0;
-      if(currentCount >= SLOT_CAPACITY){
-        state.submitting = false;
-        state.formError = "この時間枠はちょうど満員になりました。別の時間枠を選んでください。";
-        state.form.slot = null;
-        render();
-        return;
+      if(f.slot){
+        var currentCount = counts[f.slot] || 0;
+        if(currentCount >= SLOT_CAPACITY){
+          state.submitting = false;
+          state.formError = "この時間枠はちょうど満員になりました。別の時間枠を選んでください。";
+          state.form.slot = null;
+          render();
+          return;
+        }
       }
 
       var record = {
@@ -994,6 +1001,7 @@
     root.querySelectorAll('[data-action="set-ampm"]').forEach(function(el){
       el.addEventListener('click', function(){
         state.form.ampm = el.getAttribute('data-value');
+        state.form.slot = null;
         render();
       });
     });
@@ -1002,6 +1010,7 @@
       el.addEventListener('click', function(){
         if(el.getAttribute('data-full') === '1') return;
         state.form.slot = el.getAttribute('data-value');
+        state.form.ampm = null;
         render();
       });
     });
